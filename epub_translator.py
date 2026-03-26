@@ -21,11 +21,12 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 # Processamento de EPUB
 import ebooklib
@@ -279,26 +280,54 @@ class EPUBTranslator:
         ocr_enabled: bool = False,
         ocr_engine: str = "easyocr",
         ocr_languages: Optional[list[str]] = None,
+        # Callback chamado a cada documento processado: (atual, total, nome_arquivo)
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        # Callback de log extra além do logger padrão: (level, mensagem)
+        log_callback: Optional[Callable[[str, str], None]] = None,
+        # Event para cancelamento cooperativo a partir de outra thread
+        cancel_event: Optional[threading.Event] = None,
     ):
         self.source_lang = source_lang
         self.target_lang = target_lang
         self.ocr_enabled = ocr_enabled
         self.ocr_engine_name = ocr_engine
         self.ocr_languages = ocr_languages or ["en"]
+        self.progress_callback = progress_callback
+        self.log_callback = log_callback
+        self.cancel_event = cancel_event or threading.Event()
+        self._cancelled = False
 
         # Inicializa tradutor
         self.translator = GoogleTranslator(
             source=source_lang,
             target=target_lang,
         )
-        logger.info(
-            "Tradutor inicializado: %s → %s", source_lang, target_lang
-        )
+        self._log("INFO", f"Tradutor inicializado: {source_lang} → {target_lang}")
 
         # Inicializa OCR se necessário
         self._ocr_fn = None
         if ocr_enabled:
             self._ocr_fn = _load_ocr_engine(ocr_engine, self.ocr_languages)
+
+    def cancel(self) -> None:
+        """Sinaliza cancelamento cooperativo; a tradução para na próxima iteração."""
+        self._cancelled = True
+        self.cancel_event.set()
+
+    def _is_cancelled(self) -> bool:
+        return self._cancelled or self.cancel_event.is_set()
+
+    def _log(self, level: str, message: str) -> None:
+        """Emite log pelo logger padrão E pelo callback da GUI (se configurado)."""
+        log_fn = getattr(logger, level.lower(), logger.info)
+        log_fn(message)
+        if self.log_callback:
+            self.log_callback(level, message)
+
+    def _emit_progress(self, current: int, total: int, label: str) -> None:
+        """Emite evento de progresso para a GUI."""
+        if self.progress_callback:
+            self.progress_callback(current, total, label)
 
     # ------------------------------------------------------------------
     # Processamento de imagens
@@ -314,10 +343,10 @@ class EPUBTranslator:
         try:
             text = self._ocr_fn(item.content)
             if text:
-                logger.info("OCR extraiu texto de '%s': %s…", item.file_name, text[:60])
+                self._log("INFO", f"OCR extraiu texto de '{item.file_name}': {text[:60]}…")
             return text or None
         except Exception as exc:
-            logger.warning("OCR falhou em '%s': %s", item.file_name, exc)
+            self._log("WARNING", f"OCR falhou em '{item.file_name}': {exc}")
             return None
 
     def _inject_ocr_caption(
@@ -399,21 +428,29 @@ class EPUBTranslator:
     # Ponto de entrada principal
     # ------------------------------------------------------------------
 
-    def translate(self, input_path: str, output_path: str) -> None:
+    def translate(self, input_path: str, output_path: str) -> bool:
         """
         Lê o EPUB de entrada, traduz todos os documentos de texto e imagens
         (via OCR), e grava o novo EPUB no caminho de saída.
+
+        Retorna True em caso de sucesso, False se cancelado.
+        Lança exceção em caso de erro fatal.
         """
-        logger.info("Lendo EPUB: %s", input_path)
+        self._log("INFO", f"Lendo EPUB: {input_path}")
         book = epub.read_epub(input_path, options={"ignore_ncx": False})
 
         # --- Fase 1: OCR nas imagens ---
         image_ocr_map: dict[str, str] = {}
         if self.ocr_enabled:
-            logger.info("Iniciando fase de OCR em imagens…")
+            self._log("INFO", "Iniciando fase de OCR em imagens…")
             image_items = list(book.get_items_of_type(ebooklib.ITEM_IMAGE))
-            logger.info("Total de imagens encontradas: %d", len(image_items))
-            for img_item in image_items:
+            total_imgs = len(image_items)
+            self._log("INFO", f"Total de imagens encontradas: {total_imgs}")
+            for img_idx, img_item in enumerate(image_items, start=1):
+                if self._is_cancelled():
+                    self._log("WARNING", "Tradução cancelada pelo usuário.")
+                    return False
+                self._emit_progress(img_idx, total_imgs, f"OCR {img_item.file_name}")
                 ocr_text = self._process_image_item(img_item)
                 if ocr_text:
                     basename = Path(img_item.file_name).name
@@ -421,34 +458,41 @@ class EPUBTranslator:
 
         # --- Fase 2: Tradução dos documentos HTML ---
         html_items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
-        logger.info("Total de documentos HTML encontrados: %d", len(html_items))
+        total_docs = len(html_items)
+        self._log("INFO", f"Total de documentos HTML encontrados: {total_docs}")
+        self._emit_progress(0, total_docs, "Iniciando tradução…")
 
         for idx, item in enumerate(html_items, start=1):
-            logger.info(
-                "[%d/%d] Traduzindo documento: %s",
-                idx,
-                len(html_items),
-                item.file_name,
-            )
+            if self._is_cancelled():
+                self._log("WARNING", "Tradução cancelada pelo usuário.")
+                return False
+
+            self._log("INFO", f"[{idx}/{total_docs}] Traduzindo: {item.file_name}")
+            self._emit_progress(idx, total_docs, item.file_name)
+
             try:
                 translated_content = self._translate_html_document(
                     item.content, image_ocr_map
                 )
                 item.content = translated_content
             except Exception as exc:
-                logger.error(
-                    "Falha ao traduzir '%s': %s — documento mantido no original.",
-                    item.file_name,
-                    exc,
+                self._log(
+                    "ERROR",
+                    f"Falha ao traduzir '{item.file_name}': {exc} — mantido original.",
                 )
+
+        if self._is_cancelled():
+            return False
 
         # --- Fase 3: Tradução dos metadados do livro ---
         self._translate_metadata(book)
 
         # --- Fase 4: Gravação do novo EPUB ---
-        logger.info("Gravando EPUB traduzido em: %s", output_path)
+        self._log("INFO", f"Gravando EPUB traduzido em: {output_path}")
         epub.write_epub(output_path, book)
-        logger.info("Tradução concluída com sucesso!")
+        self._log("INFO", "Tradução concluída com sucesso!")
+        self._emit_progress(total_docs, total_docs, "Concluído!")
+        return True
 
     def _translate_metadata(self, book: epub.EpubBook) -> None:
         """Traduz título e descrição do livro nos metadados."""
@@ -458,10 +502,9 @@ class EPUBTranslator:
             original_title = titles[0][0] if titles[0] else ""
             if original_title:
                 new_title = translate_text(original_title, self.translator)
-                # Remove e readiciona o metadado
                 book.metadata.get("DC", {}).pop("title", None)
                 book.set_title(new_title)
-                logger.info("Título traduzido: '%s' → '%s'", original_title, new_title)
+                self._log("INFO", f"Título traduzido: '{original_title}' → '{new_title}'")
 
         # Descrição
         descs = book.get_metadata("DC", "description")
