@@ -1,0 +1,42 @@
+# ============================================================
+# requirements.txt — Dependências do epub_translator.py
+# ============================================================
+# Instalação completa (com suporte a OCR):
+#   pip install -r requirements.txt
+#
+# Instalação mínima (sem OCR):
+#   pip install EbookLib beautifulsoup4 deep-translator Pillow lxml
+# ============================================================
+
+# --- Processamento de EPUB ---
+EbookLib>=0.18
+
+# --- Parsing HTML/XML ---
+beautifulsoup4>=4.12
+lxml>=5.0               # Parser HTML mais robusto para BeautifulSoup
+
+# --- Tradução gratuita ---
+deep-translator>=1.11   # GoogleTranslator e outros motores gratuitos
+
+# --- Processamento de imagens ---
+Pillow>=10.0            # Manipulação de imagens (necessário para OCR)
+
+# --- OCR — escolha UM dos dois abaixo (ou ambos) ---
+
+# Opção A: EasyOCR (recomendado — sem dependência de binário externo)
+# Suporta +80 idiomas, baseado em PyTorch
+easyocr>=1.7
+
+# Opção B: PyTesseract (wrapper Python para o Tesseract OCR)
+# ATENÇÃO: Requer instalação do binário Tesseract no sistema operacional:
+#   Ubuntu/Debian: sudo apt-get install tesseract-ocr
+#   macOS:         brew install tesseract
+#   Windows:       https://github.com/UB-Mannheim/tesseract/wiki
+pytesseract>=0.3.10
+
+# --- Dependências transitivas relevantes ---
+# (instaladas automaticamente, listadas para clareza)
+# torch>=2.0             # Instalado pelo EasyOCR automaticamente
+# torchvision>=0.15      # Instalado pelo EasyOCR automaticamente
+# numpy>=1.24            # Dependência de EasyOCR e Pillow
+# requests>=2.28         # Usado por deep-translator internamente
