@@ -301,6 +301,114 @@ class DropZone(ctk.CTkFrame):
 
 
 # ---------------------------------------------------------------------------
+# Diálogo "Sobre" — texto criado por Francisco
+# ---------------------------------------------------------------------------
+
+class _AboutDialog(ctk.CTkToplevel):
+    """
+    Janela 'Sobre o EPUB Translator'.
+    Apresenta o aplicativo, seu criador e informações técnicas.
+    """
+
+    _ABOUT_TEXT = """
+EPUB Translator é uma ferramenta gratuita criada por Francisco para
+traduzir livros digitais no formato EPUB de qualquer idioma para outro,
+de forma rápida, preservando toda a formatação original — incluindo
+negrito, itálico, cabeçalhos, tabelas e imagens.
+
+A ideia nasceu de uma necessidade real: acessar conteúdo técnico e
+literário disponível apenas em inglês, tornando o conhecimento mais
+acessível para leitores que preferem ou precisam ler em português (ou
+qualquer outro idioma).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  O que este programa faz
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ✓  Traduz o conteúdo textual do EPUB sem destruir a estrutura HTML
+  ✓  Preserva negrito, itálico, links, tabelas e listas
+  ✓  Detecta e traduz texto dentro de imagens via OCR (opcional)
+  ✓  Divide textos longos automaticamente para evitar erros de limite
+  ✓  Traduz os metadados do livro (título, descrição)
+  ✓  Suporta mais de 80 idiomas via Google Translate gratuito
+  ✓  Interface 100% em português, sem necessidade de instalar nada
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Tecnologias utilizadas
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  • EbookLib      — leitura e escrita de arquivos EPUB
+  • BeautifulSoup — análise e manipulação de HTML
+  • deep-translator — acesso gratuito ao Google Translate
+  • EasyOCR / PyTesseract — reconhecimento de texto em imagens
+  • CustomTkinter — interface gráfica moderna
+  • PyInstaller   — empacotamento como executável standalone
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Uso e distribuição
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Este software é distribuído gratuitamente para uso pessoal.
+Utilize com responsabilidade e respeite os direitos autorais
+dos livros que você traduzir.
+"""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Sobre o EPUB Translator")
+        self.geometry("560x600")
+        self.resizable(False, False)
+        self._build()
+
+    def _build(self) -> None:
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        # Cabeçalho colorido
+        header = ctk.CTkFrame(self, fg_color="#0d47a1", corner_radius=0)
+        header.grid(row=0, column=0, sticky="ew")
+        header.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            header, text="📚", font=ctk.CTkFont(size=40),
+        ).grid(row=0, column=0, pady=(18, 4))
+
+        ctk.CTkLabel(
+            header,
+            text="EPUB Translator",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color="white",
+        ).grid(row=1, column=0)
+
+        ctk.CTkLabel(
+            header,
+            text=f"Versão {APP_VERSION}  •  Criado por Francisco",
+            font=ctk.CTkFont(size=12),
+            text_color="#90caf9",
+        ).grid(row=2, column=0, pady=(2, 16))
+
+        # Corpo de texto
+        body = ctk.CTkTextbox(
+            self,
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            wrap="word",
+            state="normal",
+        )
+        body.grid(row=1, column=0, sticky="nsew", padx=18, pady=12)
+        body.insert("0.0", self._ABOUT_TEXT.strip())
+        body.configure(state="disabled")
+
+        # Botão fechar
+        ctk.CTkButton(
+            self,
+            text="Fechar",
+            width=120,
+            height=36,
+            command=self.destroy,
+        ).grid(row=2, column=0, pady=(0, 16))
+
+
+# ---------------------------------------------------------------------------
 # Janela principal
 # ---------------------------------------------------------------------------
 class App(ctk.CTk if not _DND_AVAILABLE else TkinterDnD.Tk):
@@ -374,6 +482,18 @@ class App(ctk.CTk if not _DND_AVAILABLE else TkinterDnD.Tk):
             text="📚 EPUB Translator",
             font=ctk.CTkFont(size=22, weight="bold"),
         ).grid(row=0, column=0, sticky="w")
+
+        # Botão Sobre / About
+        ctk.CTkButton(
+            header,
+            text="ℹ  Sobre",
+            width=80,
+            height=28,
+            fg_color="transparent",
+            border_width=1,
+            font=ctk.CTkFont(size=12),
+            command=self._show_about,
+        ).grid(row=0, column=1, sticky="e", padx=(0, 8))
 
         # Toggle de tema claro/escuro
         self._theme_switch = ctk.CTkSwitch(
@@ -605,7 +725,7 @@ class App(ctk.CTk if not _DND_AVAILABLE else TkinterDnD.Tk):
         # --- Rodapé ---
         footer = ctk.CTkLabel(
             self,
-            text=f"EPUB Translator {APP_VERSION}  •  Powered by deep-translator & ebooklib",
+            text=f"EPUB Translator {APP_VERSION}  •  por Francisco  •  Powered by deep-translator & ebooklib",
             font=ctk.CTkFont(size=10),
             text_color="gray",
         )
@@ -614,6 +734,12 @@ class App(ctk.CTk if not _DND_AVAILABLE else TkinterDnD.Tk):
     # ------------------------------------------------------------------
     # Callbacks de UI
     # ------------------------------------------------------------------
+
+    def _show_about(self) -> None:
+        """Abre o diálogo 'Sobre o EPUB Translator'."""
+        about = _AboutDialog(self)
+        about.grab_set()
+        about.wait_window()
 
     def _toggle_theme(self) -> None:
         mode = self._theme_switch.get()

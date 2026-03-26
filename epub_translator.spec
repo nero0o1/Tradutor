@@ -1,122 +1,145 @@
 # epub_translator.spec
 # ====================
-# Arquivo de especificação do PyInstaller para gerar o executável do EPUB Translator.
+# Especificação PyInstaller para o executável auto-instalável do EPUB Translator.
 #
 # Uso:
 #   pyinstaller epub_translator.spec
 #
-# O executável gerado estará em: dist/EPUBTranslator/EPUBTranslator(.exe)
+# Gera: dist/EPUBTranslator/EPUBTranslator.exe  (Windows)
+#        dist/EPUBTranslator/EPUBTranslator      (Linux/macOS)
 #
-# NOTAS SOBRE EASYOCR:
-#   Os modelos do EasyOCR (~100 MB cada) são baixados em tempo de execução para
-#   ~/.EasyOCR/model/ na primeira vez que o OCR é ativado. Isso é intencional:
-#   incluí-los no executável tornaria o .exe > 2 GB. O app informa o usuário
-#   sobre o download automático via interface.
+# ARQUITETURA DE AUTO-INSTALAÇÃO:
+#   O .exe inclui APENAS:
+#     - launcher.py         (entry point + splash screen)
+#     - setup_wizard.py     (assistente de primeira execução)
+#     - gui_app.py          (GUI principal)
+#     - epub_translator.py  (motor de tradução)
+#     - customtkinter       (necessário para as UIs de setup e principal)
+#     - pip                 (para instalar as deps pesadas no primeiro run)
 #
-# NOTAS SOBRE TESSERACT:
-#   O binário do Tesseract deve estar instalado separadamente no sistema e
-#   adicionado ao PATH. No Windows, o instalador oficial está em:
-#   https://github.com/UB-Mannheim/tesseract/wiki
+#   Na PRIMEIRA EXECUÇÃO o app:
+#     1. Exibe o assistente de configuração (setup_wizard.py)
+#     2. Instala deps via pip em %APPDATA%\EPUBTranslator\packages
+#     3. Salva flag de configuração concluída
+#
+#   Nas EXECUÇÕES SEGUINTES:
+#     1. Carrega os pacotes já instalados de %APPDATA%\EPUBTranslator\packages
+#     2. Abre a GUI diretamente (com splash rápido)
+#
+# VANTAGENS desta abordagem:
+#   - .exe inicial PEQUENO (~80 MB sem torch)
+#   - Usuário escolhe instalar ou não o OCR (que pesa ~1,5 GB)
+#   - Instalação ocorre apenas uma vez
+#   - Funciona mesmo sem Python instalado no sistema
 
 import os
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Descoberta de caminhos de pacotes (executado em tempo de build)
-# ---------------------------------------------------------------------------
 
-def get_package_path(pkg: str) -> str:
-    import importlib
+def get_pkg_path(pkg: str) -> Path:
+    import importlib.util
     spec = importlib.util.find_spec(pkg)
     if spec and spec.submodule_search_locations:
-        return str(Path(list(spec.submodule_search_locations)[0]))
+        return Path(list(spec.submodule_search_locations)[0])
     raise ImportError(f"Pacote não encontrado: {pkg}")
 
 
-# Caminho do customtkinter (contém themes e assets)
-try:
-    CTK_PATH = get_package_path("customtkinter")
-except ImportError:
-    CTK_PATH = None
-
-# Caminho do tkinterdnd2 (contém extensão Tcl nativa)
-try:
-    DND_PATH = get_package_path("tkinterdnd2")
-except ImportError:
-    DND_PATH = None
-
 # ---------------------------------------------------------------------------
-# Dados extras a incluir no bundle
+# Dados a incluir no bundle (apenas o que é necessário ANTES da instalação)
 # ---------------------------------------------------------------------------
 added_datas = []
 
-if CTK_PATH:
-    # Inclui todos os temas e imagens do CustomTkinter
-    added_datas.append((CTK_PATH, "customtkinter"))
+# CustomTkinter — necessário para o setup wizard e GUI principal
+try:
+    ctk_path = get_pkg_path("customtkinter")
+    added_datas.append((str(ctk_path), "customtkinter"))
+    print(f"[spec] customtkinter: {ctk_path}")
+except ImportError:
+    print("[spec] AVISO: customtkinter não encontrado!")
 
-if DND_PATH:
-    # Inclui a extensão Tcl/Tk do TkinterDnD2
-    added_datas.append((DND_PATH, "tkinterdnd2"))
+# TkinterDnD2 — drag & drop (opcional, app funciona sem)
+try:
+    dnd_path = get_pkg_path("tkinterdnd2")
+    added_datas.append((str(dnd_path), "tkinterdnd2"))
+    print(f"[spec] tkinterdnd2: {dnd_path}")
+except ImportError:
+    print("[spec] tkinterdnd2 não encontrado — drag-and-drop desativado no .exe")
+
 
 # ---------------------------------------------------------------------------
-# Hidden imports — módulos não detectados automaticamente pelo PyInstaller
+# Hidden imports — apenas stdlib + customtkinter + pip (tudo já no Python)
 # ---------------------------------------------------------------------------
 hidden_imports = [
-    # deep_translator
-    "deep_translator",
-    "deep_translator.google_trans",
-    "deep_translator.engines",
-    # ebooklib
-    "ebooklib",
-    "ebooklib.epub",
-    "ebooklib.utils",
-    # beautifulsoup4
-    "bs4",
-    "bs4.builder",
-    "bs4.builder._lxml",
-    "bs4.builder._htmlparser",
-    # lxml
-    "lxml",
-    "lxml.etree",
-    "lxml._elementpath",
-    # PIL / Pillow
-    "PIL",
-    "PIL.Image",
-    "PIL.ImageOps",
-    # EasyOCR (importações lazy — deve estar no hidden imports)
-    "easyocr",
-    "easyocr.easyocr",
-    "easyocr.detection",
-    "easyocr.recognition",
-    # PyTorch (dependência do EasyOCR)
-    "torch",
-    "torchvision",
-    "torch.nn",
-    "torch.nn.functional",
-    # pytesseract
-    "pytesseract",
-    # tkinter e extensões
+    # Tkinter
     "tkinter",
     "tkinter.filedialog",
     "tkinter.messagebox",
     "tkinterdnd2",
-    # customtkinter
+    # CustomTkinter
     "customtkinter",
-    # stdlib
+    "customtkinter.windows",
+    "customtkinter.windows.widgets",
+    # pip — necessário para auto-instalação no primeiro run
+    "pip",
+    "pip._internal",
+    "pip._internal.cli",
+    "pip._internal.cli.main",
+    "pip._internal.commands",
+    "pip._internal.commands.install",
+    "pip._internal.network",
+    "pip._internal.network.session",
+    "pip._vendor",
+    "pip._vendor.certifi",
+    "pip._vendor.urllib3",
+    # Módulos da aplicação
+    "launcher",
+    "setup_wizard",
+    "gui_app",
+    "epub_translator",
+    # stdlib usada internamente
     "queue",
     "threading",
     "logging",
+    "json",
+    "subprocess",
     "pathlib",
+    "runpy",
+    "importlib",
+    "importlib.util",
 ]
 
 # ---------------------------------------------------------------------------
-# Spec principal
+# Módulos a excluir (não são usados antes da instalação online)
+# ---------------------------------------------------------------------------
+excludes = [
+    # Estes serão instalados em runtime pelo setup_wizard
+    "ebooklib",
+    "bs4",
+    "lxml",
+    "deep_translator",
+    "PIL",
+    "easyocr",
+    "torch",
+    "torchvision",
+    "pytesseract",
+    # Outros desnecessários
+    "matplotlib",
+    "scipy",
+    "pandas",
+    "notebook",
+    "IPython",
+    "pytest",
+    "numpy",       # instalado junto com easyocr se necessário
+]
+
+# ---------------------------------------------------------------------------
+# Spec
 # ---------------------------------------------------------------------------
 block_cipher = None
 
 a = Analysis(
-    ["gui_app.py"],
+    ["launcher.py"],
     pathex=["."],
     binaries=[],
     datas=added_datas,
@@ -124,17 +147,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        # Exclui módulos desnecessários para reduzir tamanho do .exe
-        "matplotlib",
-        "scipy",
-        "pandas",
-        "notebook",
-        "IPython",
-        "pytest",
-        "setuptools",
-        "distutils",
-    ],
+    excludes=excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -147,19 +160,19 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    exclude_binaries=True,         # Modo COLLECT (pasta): melhor para torch
+    exclude_binaries=True,
     name="EPUBTranslator",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,                      # Compressão UPX (requer upx instalado)
-    console=False,                 # Sem janela de console no Windows
+    upx=True,
+    console=False,          # Sem janela de console preta no Windows
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # icon="assets/icon.ico",      # Descomente e forneça um .ico para ícone customizado
+    # icon="assets/icon.ico",   # Forneça um .ico para ícone personalizado
 )
 
 coll = COLLECT(
